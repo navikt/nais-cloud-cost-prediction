@@ -1,5 +1,6 @@
 datastory == 0.1.14
 db-dtypes == 1.1.1
+google-auth == 2.21.0
 google-cloud-bigquery == 3.11.3
 google-cloud-secret-manager == 2.16.1
 numpy == 1.25.0

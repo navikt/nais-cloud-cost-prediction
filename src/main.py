@@ -8,12 +8,13 @@ import plotly.subplots as sp
 from datastory import DataStory
 from datetime import datetime, date, timedelta
 from google.cloud import bigquery, secretmanager
+from google.oauth2.service_account import Credentials
 from sklearn.linear_model import LinearRegression
 
 
-def load_data_from_bq(Client, query_number):
+def load_data_from_bq(client, query_number):
     if query_number == 1:
-        return Client.query("""
+        return client.query("""
             select EXTRACT(year from dato) as year, EXTRACT(month from dato) as month,  EXTRACT(ISOWEEK from dato) as week,
             case when EXTRACT(month from dato) in (11, 12) then EXTRACT(year from dato) + 1
             else EXTRACT(year from dato) end as fin_year,
@@ -25,7 +26,7 @@ def load_data_from_bq(Client, query_number):
             order by year asc, month asc, week asc;
             """).result().to_dataframe()
     elif query_number == 2:
-        return Client.query("""
+        return client.query("""
             SELECT month, env, service_description, sum(calculated_cost) as calculated_cost, status,
             case when extract(month from month) in (11,12) then extract(year from month) + 1
             else extract(year from month) end as fin_year
@@ -34,7 +35,7 @@ def load_data_from_bq(Client, query_number):
             order by month
             """).result().to_dataframe()
     elif query_number == 3:
-        return Client.query("""
+        return client.query("""
             select dato, 
                 case when env = "prod-gcp" then "prod"
                     when env = "dev-gcp" then "dev"
@@ -460,10 +461,11 @@ if __name__=='__main__':
     MONTHS_TO_LOOK_AT = 10 # Number of months to look at for Aivendata
     figs = {}
 
-    Client = bigquery.Client('nais-analyse-prod-2dcc')
+    credentials = Credentials.from_service_account_info(json.loads(os.environ["SA_KEY"]))
+    client = bigquery.Client(credentials=credentials, project=credentials.project_id)
     
     # GCP: 
-    df_bq = load_data_from_bq(Client, query_number=1)
+    df_bq = load_data_from_bq(client, query_number=1)
 
     df_service, current_n_week = prepare_df_service(df_bq)
     figs["services_gcp"] = make_services_fig(df_service)
@@ -482,7 +484,7 @@ if __name__=='__main__':
 
     # Aiven:
 
-    df_aiven = load_data_from_bq(Client, query_number=2)
+    df_aiven = load_data_from_bq(client, query_number=2)
     figs["services_aiven"] = make_aiven_services_fig(df_aiven)
     df_aiven_month = group_aiven_month(df_aiven)
     current_n_month, n_months = make_month_vars(df_aiven_month)
@@ -497,7 +499,7 @@ if __name__=='__main__':
 
     # Cost changes:
 
-    df_days = load_data_from_bq(Client, query_number=3)
+    df_days = load_data_from_bq(client, query_number=3)
     df_highest_percent, df_highest_euro = prepare_change_dataframes(df_days)
     figs.update(make_change_figs(df_highest_percent, df_highest_euro))
 

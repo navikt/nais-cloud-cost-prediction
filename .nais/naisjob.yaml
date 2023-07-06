@@ -13,6 +13,7 @@ spec:
   backoffLimit: 2
   envFrom:
     - secret: kostnad-story-token
+    - secret: cloud-cost-prediction-sa
   resources:
     request:
       cpu: 100m
