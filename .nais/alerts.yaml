@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: nais-analyse-cloud-cost-prediction
+  namespace: nais-analyse
+  labels:
+    team: nais-analyse
+spec:
+  groups:
+  - name: nada-data-analyse-alert
+    rules:
+    - alert: NaisjobDown
+      expr: kube_job_failed{job_name=~"^cloud-cost-prediction.*", namespace="nais-analyse"} > 0
+      for: 2m
+      annotations:
+        consequence: Datastory https://data.intern.nav.no/story/e163dfa2-39d0-4631-8b36-97e905bb460c blir ikke oppdatert
+        action: "`Oppdateres normalt daglig, men ikke kritisk. Se logger på https://logs.adeo.no -> søk etter pod:cloud-cost-prediction* AND namespace:nais-analyse`"
+        summary: |-
+           Naisjob cloud-cost-prediction feiler i prod-gcp namespace nais-analyse (repo https://github.com/navikt/nais-cloud-cost-prediction)
+      labels:
+        namespace: nais-analyse
+        severity: warning

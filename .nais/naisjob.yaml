@@ -1,0 +1,29 @@
+apiVersion: nais.io/v1
+kind: Naisjob
+metadata:
+  labels:
+    team: nais-analyse
+  name: cloud-cost-prediction
+  namespace: nais-analyse
+spec:
+  image: {{ image }}
+  schedule: "00 6 * * *"
+  failedJobsHistoryLimit: 1
+  successfulJobsHistoryLimit: 1
+  backoffLimit: 2
+  envFrom:
+    - secret: kostnad-story-token
+  resources:
+    request:
+      cpu: 100m
+      memory: 1028Mi
+  gcp:
+    bigQueryDatasets:
+      - name: nais_billing_nav
+        permission: READ
+
+  accessPolicy:
+    outbound:
+      external:
+        - host: data.intern.nav.no
+        
