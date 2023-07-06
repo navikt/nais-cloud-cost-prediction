@@ -18,13 +18,9 @@ spec:
     request:
       cpu: 100m
       memory: 1028Mi
-  gcp:
-    bigQueryDatasets:
-      - name: nais_billing_nav
-        permission: READ
 
   accessPolicy:
     outbound:
       external:
-        - host: data.intern.nav.no
+        - host: nada.intern.nav.no
         
