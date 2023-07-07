@@ -124,10 +124,10 @@ def make_week_vars(current_n_week, x_s):
     return previous_n_week, n_weeks, n_services
 
 
-def predict_cost(mod, current_n_week, n_weeks, n_services):
+def predict_cost(mod, current_n_week, n_weeks, n_services, weeks_to_look_at, y):
     last_week = 2*52+1
     pred = np.zeros([n_weeks + 1, n_services])
-    for week in range(current_n_week, 2*52+1):
+    for week in range(current_n_week, 2*52+2):
         for service in range(n_services):
             z = np.zeros(n_services, dtype=np.int64)
             z[service] = 1
@@ -136,6 +136,21 @@ def predict_cost(mod, current_n_week, n_weeks, n_services):
     # Last week of October 2023 has only two days.
             if week == last_week:
                 pred[week-current_n_week, service] *= 2/7
+    backtrack = 5
+    pred = adjust_intercept(pred, n_services, weeks_to_look_at, y, backtrack)
+    return pred
+
+
+def adjust_intercept(pred, n_services, weeks_to_look_at, y, backtrack):
+    # Adjust intercept to median of last few weeks:
+    latest_weeks = np.zeros([n_services, backtrack])
+    for i in range(n_services):
+        new_row = y.calculated_cost.iloc[(weeks_to_look_at*(i+1)-backtrack) : (weeks_to_look_at*(i+1))]
+        latest_weeks[i,:] = new_row
+        med = np.median(latest_weeks, axis=1)
+        adjustment_addend = med - pred[0,:]
+    # Skip adjustment on latest week
+    pred[:-1,:] += adjustment_addend
     return pred
 
 
@@ -208,7 +223,7 @@ def make_forecast_fig(df_service, df_pred, current_n_week):
     return fig_forecast
 
 
-def prediction_history(current_n_week, df_service, weeks_to_look_at):
+def prediction_history(current_n_week, df_service, weeks_to_look_at, y):
     first_n_week = 53
     predictions = np.zeros([current_n_week - first_n_week + 1])
 
@@ -216,7 +231,7 @@ def prediction_history(current_n_week, df_service, weeks_to_look_at):
         x, y = make_training_data(df_service, n_week, weeks_to_look_at, 2)
         mod = LinearRegression().fit(x.values, y.values)
         previous_n_week, n_weeks, n_services = make_week_vars(n_week, x)
-        pred = predict_cost(mod, n_week, n_weeks, n_services)
+        pred = predict_cost(mod, n_week, n_weeks, n_services, weeks_to_look_at, y)
         df_pred = pred_to_df(pred, x, n_week)
         kostnad_i_fjor, kostnad_hittil, forventet_resten, forventet_totalt = compute_total_costs(df_bq, df_pred, n_week)
         #print(f"Kostnad i fjor: {int(kostnad_i_fjor)} € \nKostnad hittil i år: {int(kostnad_hittil)} € \nForventet gjenstående kostnad i år: {int(forventet_resten)} € \nForventet totalkostnad i år: {int(forventet_totalt)} €")
@@ -458,12 +473,15 @@ if __name__=='__main__':
     FIRST_MONTH = 11 # 1. november 2021
     FIRST_FIN_YEAR = 2022 # Budget year nov-oct
     CURRENT_YEAR = datetime.now().year
-    WEEKS_TO_LOOK_AT = 15 # Number of weeks in training set
+    WEEKS_TO_LOOK_AT = 30 # Number of weeks in training set
     MONTHS_TO_LOOK_AT = 10 # Number of months to look at for Aivendata
     figs = {}
 
-    credentials = Credentials.from_service_account_info(json.loads(os.environ["SA_KEY"]))
-    client = bigquery.Client(credentials=credentials, project=credentials.project_id)
+    if os.environ.get("SA_KEY") is not None:
+        credentials = Credentials.from_service_account_info(json.loads(os.environ["SA_KEY"]))
+        client = bigquery.Client(credentials=credentials, project=credentials.project_id)
+    else:
+        client = bigquery.Client(project='nais-analyse-prod-2dcc')
     
     # GCP: 
     df_bq = load_data_from_bq(client, query_number=1)
@@ -475,13 +493,13 @@ if __name__=='__main__':
     mod = LinearRegression().fit(x_s.values, y_s.values)
 
     previous_n_week, n_weeks, n_services = make_week_vars(current_n_week, x_s)
-    pred = predict_cost(mod, current_n_week, n_weeks, n_services)
+    pred = predict_cost(mod, current_n_week, n_weeks, n_services, WEEKS_TO_LOOK_AT, y_s)
     df_pred = pred_to_df(pred, x_s, current_n_week)
     kostnad_i_fjor, kostnad_hittil, forventet_resten, forventet_totalt = compute_total_costs(df_bq, df_pred, current_n_week)
     print(f"Kostnad i fjor: {int(kostnad_i_fjor)} € \nKostnad hittil i år: {int(kostnad_hittil)} € \nForventet gjenstående kostnad i år: {int(forventet_resten)} € \nForventet totalkostnad i år: {int(forventet_totalt)} €")
     figs["numbers_gcp"] = make_numbers_fig(kostnad_i_fjor, kostnad_hittil, forventet_resten, forventet_totalt)
     figs["forecast_gcp"] = make_forecast_fig(df_service, df_pred, current_n_week)
-    figs["historic_gcp"] = prediction_history(current_n_week, df_service, WEEKS_TO_LOOK_AT)
+    figs["historic_gcp"] = prediction_history(current_n_week, df_service, WEEKS_TO_LOOK_AT, y_s)
 
     # Aiven:
 
@@ -505,4 +523,8 @@ if __name__=='__main__':
     figs.update(make_change_figs(df_highest_percent, df_highest_euro))
 
     story = prepare_datastory(figs, WEEKS_TO_LOOK_AT, MONTHS_TO_LOOK_AT)
-    story.update(url="https://nada.intern.nav.no/api", token=os.environ["KOSTNAD_STORY_TOKEN"])
+    if os.environ.get("KOSTNAD_STORY_TOKEN") is not None:
+        story.update(url="https://nada.intern.nav.no/api", token=os.environ["KOSTNAD_STORY_TOKEN"])
+    else:
+        story.publish(url="https://nada.intern.nav.no/api")
+
