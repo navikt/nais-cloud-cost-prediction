@@ -524,7 +524,7 @@ if __name__=='__main__':
 
     story = prepare_datastory(figs, WEEKS_TO_LOOK_AT, MONTHS_TO_LOOK_AT)
     if os.environ.get("KOSTNAD_STORY_TOKEN") is not None:
-        story.update(url="https://nada.intern.nav.no/api", token=os.environ["KOSTNAD_STORY_TOKEN"])
+        story.update(url="https://datamarkedsplassen.intern.nav.no/api", token=os.environ["KOSTNAD_STORY_TOKEN"])
     else:
-        story.publish(url="https://nada.intern.nav.no/api")
+        story.publish(url="https://datamarkedsplassen.intern.nav.no/api")
 

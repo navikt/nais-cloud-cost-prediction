@@ -22,5 +22,5 @@ spec:
   accessPolicy:
     outbound:
       external:
-        - host: nada.intern.nav.no
+        - host: datamarkedsplassen.intern.nav.no
         
