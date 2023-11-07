@@ -15,13 +15,13 @@ from sklearn.linear_model import LinearRegression
 
 def load_data_from_bq(client, query_number):
     if query_number == 1:
-        return client.query("""
+        return client.query(f"""
             select EXTRACT(year from dato) as year, EXTRACT(month from dato) as month,  EXTRACT(ISOWEEK from dato) as week,
             case when EXTRACT(month from dato) in (11, 12) then EXTRACT(year from dato) + 1
             else EXTRACT(year from dato) end as fin_year,
             env, service_description, sum(calculated_cost) as calculated_cost
             from `nais-analyse-prod-2dcc.nais_billing_nav.cost_breakdown_gcp`
-            where dato >= "2021-11-01"
+            where "{FIRST_YEAR}-11-01" <= dato and dato < "{FIRST_YEAR + 2}-11-01"
             and tenant in ("nav", "dev-nais", "example")
             group by year, month, week, fin_year, env, service_description
             order by year asc, month asc, week asc;
@@ -54,6 +54,7 @@ def load_data_from_bq(client, query_number):
 
 
 def agg_week(row):
+    # enumerate weeks from 1 to 104 where week 1 contains november 1st the previous year
     if row.week >= 52 and row.month == 1:
         return row.week + 52 * (row.year - FIRST_YEAR - 1) - (FIRST_WEEK - 1)
     else:
@@ -61,6 +62,7 @@ def agg_week(row):
     
     
 def unagg_week(week):
+    # remap enumerated weeks to actual year and week number
     week_num = (week + (FIRST_WEEK - 1)) % 52
     year = (week + (FIRST_WEEK - 1)) // 52 + FIRST_YEAR
     if week_num == 0:
@@ -73,7 +75,10 @@ def prepare_df_service(df):
     df["n_week"] = df.apply(lambda row: agg_week(row), axis=1)
     cols = ["week", "n_week", "service_description"]
     current_n_week = df.n_week.max()
-    df_service = df[df.n_week < current_n_week].groupby(cols, as_index=False).calculated_cost.sum().sort_values("n_week").reset_index(drop=True)
+    if CURRENT_DATE > LAST_DATE:
+        df_service = df.groupby(cols, as_index=False).calculated_cost.sum().sort_values("n_week").reset_index(drop=True)
+    else:
+        df_service = df[df.n_week < current_n_week].groupby(cols, as_index=False).calculated_cost.sum().sort_values("n_week").reset_index(drop=True)
     df_service["year_week"] = df_service.n_week.apply(unagg_week)
    
     return df_service, current_n_week
@@ -125,7 +130,10 @@ def make_week_vars(current_n_week, x_s):
 
 
 def predict_cost(mod, current_n_week, n_weeks, n_services, weeks_to_look_at, y):
-    last_week = 2*52+1
+    first_week = 52 + 1
+    last_week = 2 * 52 + 1
+    if current_n_week >= last_week:
+        return np.zeros([1, n_services])
     pred = np.zeros([n_weeks + 1, n_services])
     for week in range(current_n_week, 2*52+2):
         for service in range(n_services):
@@ -133,9 +141,12 @@ def predict_cost(mod, current_n_week, n_weeks, n_services, weeks_to_look_at, y):
             z[service] = 1
             x1 = np.append(week, z).reshape(1,n_services+1)
             pred[week-current_n_week, service] = mod.predict(x1)[0][0]
-    # Last week of October 2023 has only two days.
+            # First and last week may be shared between October and November, so we adjust the prediction accordingly
             if week == last_week:
-                pred[week-current_n_week, service] *= 2/7
+                pred[week-current_n_week, service] *= DAYS_LAST_WEEK / 7
+            elif week == 53:
+                pred[week-current_n_week, service] *= DAYS_FIRST_WEEK / 7
+    # Adjust intercept to median of last few weeks:
     backtrack = 5
     pred = adjust_intercept(pred, n_services, weeks_to_look_at, y, backtrack)
     return pred
@@ -172,10 +183,14 @@ def prepare_df_plot(df_pred, current_n_week):
 
 
 def compute_total_costs(df_bq, df_pred, current_n_week):
-    kostnad_i_fjor = df_bq[df_bq.fin_year == 2022].calculated_cost.sum()
-    kostnad_hittil = df_bq[(df_bq.fin_year == 2023) & (df_bq.n_week < current_n_week)].calculated_cost.sum()
+    kostnad_i_fjor = df_bq[df_bq.fin_year == PREDICTION_YEAR - 1].calculated_cost.sum()
+    if CURRENT_DATE > LAST_DATE and current_n_week == MAX_N_WEEK:
+        kostnad_hittil = df_bq[(df_bq.fin_year == PREDICTION_YEAR)].calculated_cost.sum()
+        forventet_resten = 0
+    else:
+        kostnad_hittil = df_bq[(df_bq.fin_year == PREDICTION_YEAR) & (df_bq.n_week < current_n_week)].calculated_cost.sum()
+        forventet_resten = df_pred.sum(axis=1).sum()
 
-    forventet_resten = df_pred.sum(axis=1).sum()
     forventet_totalt = kostnad_hittil + forventet_resten
     return kostnad_i_fjor, kostnad_hittil, forventet_resten, forventet_totalt
 
@@ -224,7 +239,7 @@ def make_forecast_fig(df_service, df_pred, current_n_week):
 
 
 def prediction_history(current_n_week, df_service, weeks_to_look_at, y):
-    first_n_week = 53
+    first_n_week = 53 # week containing november 1st
     predictions = np.zeros([current_n_week - first_n_week + 1])
 
     for n_week in range(first_n_week, current_n_week + 1):
@@ -234,29 +249,30 @@ def prediction_history(current_n_week, df_service, weeks_to_look_at, y):
         pred = predict_cost(mod, n_week, n_weeks, n_services, weeks_to_look_at, y)
         df_pred = pred_to_df(pred, x, n_week)
         kostnad_i_fjor, kostnad_hittil, forventet_resten, forventet_totalt = compute_total_costs(df_bq, df_pred, n_week)
-        #print(f"Kostnad i fjor: {int(kostnad_i_fjor)} € \nKostnad hittil i år: {int(kostnad_hittil)} € \nForventet gjenstående kostnad i år: {int(forventet_resten)} € \nForventet totalkostnad i år: {int(forventet_totalt)} €")
         predictions[n_week - first_n_week] = forventet_totalt
 
     fig = px.line(x=np.linspace(predictions.shape[0]-1, 0, predictions.shape[0]), y=predictions,
-              title="Totalkostnad i 2023 predikert på ulike tidspunkt",
-              labels={"x":"Uker siden", "y":"Forventet kostnad 2023 (€)"})
+              title=f"Totalkostnad i {PREDICTION_YEAR} predikert på ulike tidspunkt med samme modell",
+              labels={"x":"Uker siden", "y":f"Forventet kostnad {PREDICTION_YEAR} (€)"})
     fig.update_xaxes(autorange="reversed")
     return fig
 
 
 def make_aiven_services_fig(df_aiven):
     df = df_aiven.groupby(["month", "service_description"], as_index=False).calculated_cost.sum()
-    df = df[df.month >= date(2021, 11, 1)]
+    df = df[(df.month >= FIRST_DATE) & (df.month < LAST_DATE)]
     fig = px.bar(df, "month", "calculated_cost", color='service_description', 
         labels={"month":"Måned", "calculated_cost":"Kostnad ($)", "service_description":"Service"})
     return fig
 
 
 def agg_month(x):
-    return x.month + 2 + (x.year - (FIRST_FIN_YEAR)) * 12
+    # enumerate months from 1 to 24 where month 1 is november
+    return x.month + 2 + (x.year - FIRST_FIN_YEAR) * 12
 
 
 def unagg_month(x):
+    # unenumerate months from 1 to 24 where month 1 is november
     year = FIRST_YEAR + (x + 9) // 12
     month = (x + 9) % 12 + 1
     return date(year, month, 1) 
@@ -264,7 +280,7 @@ def unagg_month(x):
 
 def group_aiven_month(df_aiven):
     df = (df_aiven
-        [(df_aiven.status != 'estimate') & (df_aiven.fin_year >= 2022)]
+        [(df_aiven.status != 'estimate') & (df_aiven.fin_year >= FIRST_FIN_YEAR)]
         .groupby(["month", "fin_year"], as_index=False)
         .calculated_cost
         .sum()
@@ -274,7 +290,10 @@ def group_aiven_month(df_aiven):
 
 
 def make_month_vars(df_aiven_month):
-    previous_n_month = df_aiven_month.n_month.max()
+    if CURRENT_DATE > LAST_DATE:
+        previous_n_month = 2 * 12
+    else:
+        previous_n_month = df_aiven_month.n_month.max()
     current_n_month = previous_n_month + 1
     n_months = 2 * 12 - previous_n_month
     return current_n_month, n_months
@@ -314,8 +333,8 @@ def make_forecast_fig_aiven(df_aiven_month, df_pred_aiven):
 
 
 def compute_total_costs_aiven(df_aiven, df_pred_aiven):
-    ifjor = df_aiven.query("fin_year == 2022").calculated_cost.sum()
-    hittil = df_aiven.query("fin_year == 2023 & status != 'estimated'").calculated_cost.sum()
+    ifjor = df_aiven.query(f"fin_year == {PREDICTION_YEAR - 1}").calculated_cost.sum()
+    hittil = df_aiven.query(f"fin_year == {PREDICTION_YEAR} & status != 'estimated'").calculated_cost.sum()
     resten = df_pred_aiven.predicted_cost.sum()
     totalt = float(hittil) + resten
     return ifjor, hittil, resten, totalt
@@ -468,13 +487,26 @@ def prepare_datastory(figs, weeks_to_look_at, months_to_look_at):
 
 
 if __name__=='__main__':
-    FIRST_YEAR = 2021 # 1. november 2021
-    FIRST_WEEK = 44 # 1. november 2021
-    FIRST_MONTH = 11 # 1. november 2021
-    FIRST_FIN_YEAR = 2022 # Budget year nov-oct
-    CURRENT_YEAR = datetime.now().year
-    WEEKS_TO_LOOK_AT = 30 # Number of weeks in training set
+    # ------------------------------------------ #
+    #           ADJUST THESE VARIABLES           #
+    PREDICTION_YEAR = 2024
+    WEEKS_TO_LOOK_AT = 20 # Number of weeks in training set
     MONTHS_TO_LOOK_AT = 10 # Number of months to look at for Aivendata
+    # ------------------------------------------ #
+    
+    # The following variables are computed from the above variables and should need to be changed
+    FIRST_YEAR = PREDICTION_YEAR - 2 # 1. november 2 years before prediction year
+    CURRENT_DATE = date.today()
+    FIRST_MONTH = 11
+    FIRST_DATE = date(FIRST_YEAR, FIRST_MONTH, 1) # Start of previous budget year
+    LAST_DATE = date(PREDICTION_YEAR, FIRST_MONTH-1, 31) # End of prediction year
+    FIRST_WEEK = FIRST_DATE.isocalendar()[1]
+    FIRST_FIN_YEAR = PREDICTION_YEAR - 1 # Budget year nov-oct
+    CURRENT_YEAR = CURRENT_DATE.year
+    DAYS_FIRST_WEEK = 7 - FIRST_DATE.weekday() # Number of days in first week of budget year
+    DAYS_LAST_WEEK = LAST_DATE.weekday() + 1 # Number of days in last week of budget year (31. oktober 2023 was a Tuesday)
+    MAX_N_WEEK = 2 * 52 + 1 # Maximum number of weeks over two years
+        
     figs = {}
 
     if os.environ.get("SA_KEY") is not None:
@@ -487,6 +519,10 @@ if __name__=='__main__':
     df_bq = load_data_from_bq(client, query_number=1)
 
     df_service, current_n_week = prepare_df_service(df_bq)
+
+    if CURRENT_DATE > LAST_DATE:
+        current_n_week = MAX_N_WEEK
+
     figs["services_gcp"] = make_services_fig(df_service)
 
     x_s, y_s = make_training_data(df_service, current_n_week, WEEKS_TO_LOOK_AT, n_top=2)
@@ -502,11 +538,12 @@ if __name__=='__main__':
     figs["historic_gcp"] = prediction_history(current_n_week, df_service, WEEKS_TO_LOOK_AT, y_s)
 
     # Aiven:
-
     df_aiven = load_data_from_bq(client, query_number=2)
     figs["services_aiven"] = make_aiven_services_fig(df_aiven)
     df_aiven_month = group_aiven_month(df_aiven)
     current_n_month, n_months = make_month_vars(df_aiven_month)
+    if CURRENT_DATE > LAST_DATE:
+        current_n_month = 2 * 12 + 1
     
     x_a, y_a = make_training_data_aiven(df_aiven_month, current_n_month, MONTHS_TO_LOOK_AT)
     mod_a = linear_regression_aiven(x_a, y_a)
@@ -526,5 +563,7 @@ if __name__=='__main__':
     if os.environ.get("KOSTNAD_STORY_TOKEN") is not None:
         story.update(url="https://datamarkedsplassen.intern.nav.no/api", token=os.environ["KOSTNAD_STORY_TOKEN"])
     else:
-        story.publish(url="https://datamarkedsplassen.intern.nav.no/api")
+        #story.publish(url="https://datamarkedsplassen.intern.nav.no/api")
+        for _, fig in figs.items():
+            fig.show()
 
