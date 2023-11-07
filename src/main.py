@@ -436,7 +436,7 @@ def prepare_datastory(figs, weeks_to_look_at, months_to_look_at):
     ds = DataStory("Kostnader i GCP og Aiven")
 
     ds.header("Kostnader i GCP")
-    ds.markdown("Det er strammere tider og derfor større behov for å ha kontroll på store utgiftsposter. Her har vi prøvd å predikere hvor mye penger Nav kommer til å bruke på GCP og Aiven i 2023.")
+    ds.markdown(f"Det er strammere tider og derfor større behov for å ha kontroll på store utgiftsposter. Her har vi prøvd å predikere hvor mye penger Nav kommer til å bruke på GCP og Aiven i {PREDICTION_YEAR}.")
     ds.header("Nøkkeltall", level=3)
     ds.markdown(f"""Forventninger er basert på utvikling siste {weeks_to_look_at} uker. 
                 Merk at det er vanskelig å spå framtiden, og forventningene er basert på en lite avansert modell. 
@@ -446,28 +446,28 @@ def prepare_datastory(figs, weeks_to_look_at, months_to_look_at):
     ds.markdown("""NB! Et år er her definert fra 1. november til 31. oktober for å enklere kunne sammenligne med regnskap.""")
     ds.plotly(figs["numbers_gcp"].to_json())
 
-    ds.header("Kostnader per service siden 1.november 2021.", level=3)
+    ds.header(f"Kostnader per service siden 1.november {FIRST_YEAR}.", level=3)
     ds.markdown("Merk at det mangler noe data fra uke 2 i 2022, slik at totalen denne uka ser lavere ut enn den var.")
     ds.plotly(figs["services_gcp"].to_json())
 
-    ds.header(f"Forventet utvikling i kostnader ut oktober 2023 basert på utvikling siste {weeks_to_look_at} uker", level=3)
-    ds.markdown("1.november 2021 var mandag uke 44. Fem av dagene i uke 44 2023 er i november, og regnes derfor ikke med.")
+    ds.header(f"Forventet utvikling i kostnader ut oktober {PREDICTION_YEAR} basert på utvikling siste {weeks_to_look_at} uker", level=3)
+    ds.markdown("1.november er ikke alltid en mandag. Det betyr at årsskiftet kan være midt i uka (typisk uke 44). Derfor kan kostnader i første og siste uke av året være lavere enn de andre.")
     ds.plotly(figs["forecast_gcp"].to_json())
 
     ds.header(f"Historisk prediksjon", level=3)
-    ds.markdown(f"""Figuren viser hva den forventede totalkostnaden for budsjettåret 2023 var på ulike tidspunkt.
+    ds.markdown(f"""Figuren viser hva den forventede totalkostnaden for budsjettåret {PREDICTION_YEAR} var på ulike tidspunkt.
                 Formålet er å få et bilde på hvor stor usikkerhet det var i prediksjonen på starten av året og hvordan den blir mindre etter som vi nærmer oss slutten av året.  
                 X-aksen viser hvor mange uker det er siden hver prediksjon ble gjort.
-                Det vil si at 0 angir siste prediksjon av totalkostnad for 2023 og første prediksjon ble gjort i starten av oktober 2022.""")
+                Det vil si at 0 angir siste prediksjon av totalkostnad for {PREDICTION_YEAR} og første prediksjon ble gjort i starten av oktober {PREDICTION_YEAR - 1}.""")
     ds.plotly(figs["historic_gcp"].to_json())
 
     ds.header(f"Kostnader i Aiven")
     ds.markdown("Vi gjentar samme prosess for Aivenkostnader. Merk at vi her kun har månedlige data og at valutaen er amerikanske dollar.")
     ds.header("Nøkkeltall", level=3)
     ds.plotly(figs["numbers_aiven"].to_json())
-    ds.header("Kostnader per service siden 1.november 2021.", level=3)
+    ds.header(f"Kostnader per service siden 1.november {FIRST_YEAR}.", level=3)
     ds.plotly(figs["services_aiven"].to_json())
-    ds.header(f"Forventet utvikling i kostnader ut oktober 2023 basert på utvikling siste {months_to_look_at} måneder", level=3)
+    ds.header(f"Forventet utvikling i kostnader ut oktober {PREDICTION_YEAR} basert på utvikling siste {months_to_look_at} måneder", level=3)
     ds.plotly(figs["forecast_aiven"].to_json())
 
 
@@ -489,7 +489,7 @@ def prepare_datastory(figs, weeks_to_look_at, months_to_look_at):
 if __name__=='__main__':
     # ------------------------------------------ #
     #           ADJUST THESE VARIABLES           #
-    PREDICTION_YEAR = 2024
+    PREDICTION_YEAR = 2023 # Budget year
     WEEKS_TO_LOOK_AT = 20 # Number of weeks in training set
     MONTHS_TO_LOOK_AT = 10 # Number of months to look at for Aivendata
     # ------------------------------------------ #
@@ -563,7 +563,6 @@ if __name__=='__main__':
     if os.environ.get("KOSTNAD_STORY_TOKEN") is not None:
         story.update(url="https://datamarkedsplassen.intern.nav.no/api", token=os.environ["KOSTNAD_STORY_TOKEN"])
     else:
-        #story.publish(url="https://datamarkedsplassen.intern.nav.no/api")
         for _, fig in figs.items():
             fig.show()
 
